@@ -108,7 +108,9 @@ NAN_METHOD(SynchronousSocket::Read) {
     }
     v8::Local<v8::String> out;
     if (nread == 0) {
-        out = Nan::New("").ToLocalChecked();
+        free(buf);
+        info.GetReturnValue().Set(Nan::Null());
+        return;
     }
     else {
         out = Nan::New<v8::String>((const char *)buf, (int)nread).ToLocalChecked();
