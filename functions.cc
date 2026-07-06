@@ -3,6 +3,9 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <poll.h>
+#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
 #include <iostream>
@@ -55,37 +58,63 @@ NAN_METHOD(SynchronousSocket::Disconnect) {
 }
 
 NAN_METHOD(SynchronousSocket::Read) {
-    SynchronousSocket* obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
-    char buffer;
-    ssize_t bytesRead;
-    size_t bufferSize = 0;
-    char* result = NULL;
-    while ((bytesRead = read(obj->socketfd_, &buffer, 1)) > 0) {
-        if (buffer == 0x04) {  // Ctrl+D (end of transmission)
+    SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
+    // Blocking read that returns whatever bytes are currently available.
+    auto read_available_blocking = [](int fd, unsigned char **out_buf) -> ssize_t {
+        *out_buf = NULL;
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        for (;;) {
+            int pr = poll(&pfd, 1, -1);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                return -1;
+            }
             break;
         }
-        char* temp = (char*)realloc(result, bufferSize + 1);
-        if (temp == NULL) {
-            free(result);
-            return;
+        if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+            unsigned char *buf = (unsigned char *)malloc(1);
+            if (!buf) return -1;
+            *out_buf = buf;
+            return 0;
         }
-        result = temp;
-        result[bufferSize] = buffer;
-        bufferSize++;
-    }
-    if (result != NULL) {
-        result = (char*)realloc(result, bufferSize + 1);
-        if (result != NULL) {
-            result[bufferSize] = '\0';
+        int queued = 0;
+        if (ioctl(fd, FIONREAD, &queued) < 0) {
+            return -1;
         }
-    }
-    if (result == NULL) { // 0x04 received before any data was read
-        result = (char*)malloc(1);
-        if (result != NULL) {
-            result[0] = '\0';
+        if (queued == 0) {
+            unsigned char *buf = (unsigned char *)malloc(1);
+            if (!buf) return -1;
+            *out_buf = buf;
+            return 0;
         }
+        unsigned char *buf = (unsigned char *)malloc((size_t)queued);
+        if (!buf) return -1;
+        ssize_t nread = ::read(fd, buf, (size_t)queued);
+        if (nread < 0) {
+            free(buf);
+            return -1;
+        }
+        *out_buf = buf;
+        return nread;
+    };
+
+    unsigned char *buf = NULL;
+    ssize_t nread = read_available_blocking(obj->socketfd_, &buf);
+    if (nread < 0) {
+        if (buf) free(buf);
+        return Nan::ThrowError("Unable to read from socket.");
     }
-    info.GetReturnValue().Set(Nan::New<v8::String>(result).ToLocalChecked());
+    v8::Local<v8::String> out;
+    if (nread == 0) {
+        out = Nan::New("").ToLocalChecked();
+    }
+    else {
+        out = Nan::New<v8::String>((const char *)buf, (int)nread).ToLocalChecked();
+    }
+    free(buf);
+    info.GetReturnValue().Set(out);
 }
 
 NAN_METHOD(SynchronousSocket::Write) {
