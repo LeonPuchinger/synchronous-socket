@@ -79,6 +79,12 @@ NAN_METHOD(SynchronousSocket::Read) {
             result[bufferSize] = '\0';
         }
     }
+    if (result == NULL) { // 0x04 received before any data was read
+        result = (char*)malloc(1);
+        if (result != NULL) {
+            result[0] = '\0';
+        }
+    }
     info.GetReturnValue().Set(Nan::New<v8::String>(result).ToLocalChecked());
 }
 
