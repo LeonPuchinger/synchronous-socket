@@ -60,6 +60,7 @@ NAN_METHOD(SynchronousSocket::Disconnect) {
 NAN_METHOD(SynchronousSocket::Read) {
     SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
     // Blocking read that returns whatever bytes are currently available.
+    // Use poll() to wait for readability, then read up to a fixed buffer size.
     auto read_available_blocking = [](int fd, unsigned char **out_buf) -> ssize_t {
         *out_buf = NULL;
         struct pollfd pfd;
@@ -79,19 +80,10 @@ NAN_METHOD(SynchronousSocket::Read) {
             *out_buf = buf;
             return 0;
         }
-        int queued = 0;
-        if (ioctl(fd, FIONREAD, &queued) < 0) {
-            return -1;
-        }
-        if (queued == 0) {
-            unsigned char *buf = (unsigned char *)malloc(1);
-            if (!buf) return -1;
-            *out_buf = buf;
-            return 0;
-        }
-        unsigned char *buf = (unsigned char *)malloc((size_t)queued);
+        const size_t BUF_SIZE = 4096;
+        unsigned char *buf = (unsigned char *)malloc(BUF_SIZE);
         if (!buf) return -1;
-        ssize_t nread = ::read(fd, buf, (size_t)queued);
+        ssize_t nread = ::read(fd, buf, BUF_SIZE);
         if (nread < 0) {
             free(buf);
             return -1;
