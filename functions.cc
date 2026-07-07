@@ -23,6 +23,7 @@ NAN_MODULE_INIT(SynchronousSocket::Init) {
     Nan::SetPrototypeMethod(tpl, "read", Read);
     Nan::SetPrototypeMethod(tpl, "readIntoBuffer", ReadIntoBuffer);
     Nan::SetPrototypeMethod(tpl, "write", Write);
+    Nan::SetPrototypeMethod(tpl, "writeFromBuffer", WriteFromBuffer);
 
     constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
     Nan::Set(target, Nan::New("SynchronousSocket").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
@@ -188,4 +189,36 @@ NAN_METHOD(SynchronousSocket::Write) {
         close(obj->socketfd_);
         Nan::ThrowError("Unable to write to socket.");
     }
+}
+
+NAN_METHOD(SynchronousSocket::WriteFromBuffer) {
+    SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
+    if (info.Length() == 0 || !info[0]->IsArrayBufferView()) {
+        return Nan::ThrowTypeError("Buffer must be a Uint8Array, Buffer, or other ArrayBuffer view.");
+    }
+    v8::Local<v8::ArrayBufferView> view = info[0].As<v8::ArrayBufferView>();
+    size_t buffer_length = view->ByteLength();
+    if (buffer_length == 0) {
+        info.GetReturnValue().Set(Nan::New<v8::Uint32>(0));
+        return;
+    }
+    std::shared_ptr<v8::BackingStore> backing_store = view->Buffer()->GetBackingStore();
+    unsigned char *data = static_cast<unsigned char *>(backing_store->Data()) + view->ByteOffset();
+    size_t total_written = 0;
+    while (total_written < buffer_length) {
+        ssize_t written = ::write(obj->socketfd_, data + total_written, buffer_length - total_written);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(obj->socketfd_);
+            return Nan::ThrowError("Unable to write to socket.");
+        }
+        if (written == 0) {
+            close(obj->socketfd_);
+            return Nan::ThrowError("Unable to write to socket.");
+        }
+        total_written += (size_t)written;
+    }
+    info.GetReturnValue().Set(Nan::New<v8::Number>(static_cast<double>(total_written)));
 }

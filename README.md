@@ -3,7 +3,7 @@
 This Node.js module exposes a class called `SynchronousSocket`, which
 acts as a synchronous interface to Unix domain sockets.
 
-There are five methods for the class `SynchronousSocket`, all
+There are six methods for the class `SynchronousSocket`, all
 implemented in C++. These are:
 
 - `connect`
@@ -11,6 +11,7 @@ implemented in C++. These are:
 - `read`
 - `readIntoBuffer`
 - `write`
+- `writeFromBuffer`
 
 Using these five functions you can synchronously communicate with a
 Unix domain socket.
@@ -30,4 +31,9 @@ const nread = i.readIntoBuffer(bytes);
 if (nread !== null) {
 	console.log(bytes.slice(0, nread));
 }
+
+// Write binary data without converting it to a string first.
+const outgoing = new Uint8Array([1, 2, 3, 4]);
+const nwritten = i.writeFromBuffer(outgoing);
+console.log(nwritten);
 ```
