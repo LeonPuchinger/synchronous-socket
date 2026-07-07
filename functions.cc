@@ -59,8 +59,18 @@ NAN_METHOD(SynchronousSocket::Disconnect) {
 
 NAN_METHOD(SynchronousSocket::Read) {
     SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
-    // Blocking read that returns whatever bytes are currently available.
-    auto read_available_blocking = [](int fd, unsigned char **out_buf) -> ssize_t {
+    // Optional limit argument: if provided and numeric, read at most that many bytes.
+    bool has_limit = false;
+    uint32_t limit = 0;
+    if (info.Length() > 0 && info[0]->IsNumber()) {
+        has_limit = true;
+        limit = Nan::To<uint32_t>(info[0]).FromJust();
+    }
+    else if (info.Length() > 0 && !info[0]->IsUndefined() && !info[0]->IsNull()) {
+        return Nan::ThrowTypeError("Optional limit must be a number.");
+    }
+    // Blocking read that returns whatever bytes are currently available (up to limit).
+    auto read_available_blocking = [](int fd, unsigned char **out_buf, bool has_limit, uint32_t limit) -> ssize_t {
         *out_buf = NULL;
         struct pollfd pfd;
         pfd.fd = fd;
@@ -89,9 +99,19 @@ NAN_METHOD(SynchronousSocket::Read) {
             *out_buf = buf;
             return 0;
         }
-        unsigned char *buf = (unsigned char *)malloc((size_t)queued);
+        size_t to_read = (size_t)queued;
+        if (has_limit) {
+            if (limit == 0) {
+                unsigned char *buf = (unsigned char *)malloc(1);
+                if (!buf) return -1;
+                *out_buf = buf;
+                return 0;
+            }
+            if ((size_t)limit < to_read) to_read = (size_t)limit;
+        }
+        unsigned char *buf = (unsigned char *)malloc(to_read);
         if (!buf) return -1;
-        ssize_t nread = ::read(fd, buf, (size_t)queued);
+        ssize_t nread = ::read(fd, buf, to_read);
         if (nread < 0) {
             free(buf);
             return -1;
@@ -101,7 +121,7 @@ NAN_METHOD(SynchronousSocket::Read) {
     };
 
     unsigned char *buf = NULL;
-    ssize_t nread = read_available_blocking(obj->socketfd_, &buf);
+    ssize_t nread = read_available_blocking(obj->socketfd_, &buf, has_limit, limit);
     if (nread < 0) {
         if (buf) free(buf);
         return Nan::ThrowError("Unable to read from socket.");
