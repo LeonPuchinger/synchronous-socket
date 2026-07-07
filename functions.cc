@@ -3,8 +3,12 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <poll.h>
+#include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <algorithm>
 #include <iostream>
 
 Nan::Persistent<v8::Function> SynchronousSocket::constructor;
@@ -17,7 +21,9 @@ NAN_MODULE_INIT(SynchronousSocket::Init) {
     Nan::SetPrototypeMethod(tpl, "connect", Connect);
     Nan::SetPrototypeMethod(tpl, "disconnect", Disconnect);
     Nan::SetPrototypeMethod(tpl, "read", Read);
+    Nan::SetPrototypeMethod(tpl, "readIntoBuffer", ReadIntoBuffer);
     Nan::SetPrototypeMethod(tpl, "write", Write);
+    Nan::SetPrototypeMethod(tpl, "writeFromBuffer", WriteFromBuffer);
 
     constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
     Nan::Set(target, Nan::New("SynchronousSocket").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
@@ -55,31 +61,120 @@ NAN_METHOD(SynchronousSocket::Disconnect) {
 }
 
 NAN_METHOD(SynchronousSocket::Read) {
-    SynchronousSocket* obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
-    char buffer;
-    ssize_t bytesRead;
-    size_t bufferSize = 0;
-    char* result = NULL;
-    while ((bytesRead = read(obj->socketfd_, &buffer, 1)) > 0) {
-        if (buffer == 0x04) {  // Ctrl+D (end of transmission)
+    SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
+    bool has_limit = false;
+    size_t limit = 0;
+    if (info.Length() > 0 && info[0]->IsNumber()) {
+        has_limit = true;
+        limit = Nan::To<uint32_t>(info[0]).FromJust();
+    }
+    else if (info.Length() > 0 && !info[0]->IsUndefined() && !info[0]->IsNull()) {
+        return Nan::ThrowTypeError("Optional limit must be a number.");
+    }
+
+    auto wait_for_available_bytes = [](int fd, size_t *available_bytes) -> bool {
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        for (;;) {
+            int pr = poll(&pfd, 1, -1);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
             break;
         }
-        char* temp = (char*)realloc(result, bufferSize + 1);
-        if (temp == NULL) {
-            free(result);
-            return;
+        if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+            *available_bytes = 0;
+            return true;
         }
-        result = temp;
-        result[bufferSize] = buffer;
-        bufferSize++;
-    }
-    if (result != NULL) {
-        result = (char*)realloc(result, bufferSize + 1);
-        if (result != NULL) {
-            result[bufferSize] = '\0';
+        int queued = 0;
+        if (ioctl(fd, FIONREAD, &queued) < 0) {
+            return false;
         }
+        *available_bytes = (size_t)queued;
+        return true;
+    };
+
+    size_t available_bytes = 0;
+    if (!wait_for_available_bytes(obj->socketfd_, &available_bytes)) {
+        return Nan::ThrowError("Unable to read from socket.");
     }
-    info.GetReturnValue().Set(Nan::New<v8::String>(result).ToLocalChecked());
+    if (available_bytes == 0) {
+        info.GetReturnValue().Set(Nan::Null());
+        return;
+    }
+    size_t to_read = available_bytes;
+    if (has_limit) {
+        to_read = std::min(to_read, limit);
+    }
+    unsigned char *buf = (unsigned char *)malloc(to_read);
+    if (!buf) {
+        return Nan::ThrowError("Unable to read from socket.");
+    }
+    ssize_t nread = ::read(obj->socketfd_, buf, to_read);
+    if (nread < 0) {
+        free(buf);
+        return Nan::ThrowError("Unable to read from socket.");
+    }
+    v8::Local<v8::String> out = Nan::New<v8::String>((const char *)buf, (int)nread).ToLocalChecked();
+    free(buf);
+    info.GetReturnValue().Set(out);
+}
+
+NAN_METHOD(SynchronousSocket::ReadIntoBuffer) {
+    SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
+    if (info.Length() == 0 || !info[0]->IsArrayBufferView()) {
+        return Nan::ThrowTypeError("Buffer must be a Uint8Array, Buffer, or other ArrayBuffer view.");
+    }
+
+    v8::Local<v8::ArrayBufferView> view = info[0].As<v8::ArrayBufferView>();
+    size_t buffer_length = view->ByteLength();
+    if (buffer_length == 0) {
+        info.GetReturnValue().Set(Nan::New<v8::Uint32>(0));
+        return;
+    }
+
+    auto wait_for_available_bytes = [](int fd, size_t *available_bytes) -> bool {
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        for (;;) {
+            int pr = poll(&pfd, 1, -1);
+            if (pr < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+            break;
+        }
+        if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+            *available_bytes = 0;
+            return true;
+        }
+        int queued = 0;
+        if (ioctl(fd, FIONREAD, &queued) < 0) {
+            return false;
+        }
+        *available_bytes = (size_t)queued;
+        return true;
+    };
+
+    size_t available_bytes = 0;
+    if (!wait_for_available_bytes(obj->socketfd_, &available_bytes)) {
+        return Nan::ThrowError("Unable to read from socket.");
+    }
+    if (available_bytes == 0) {
+        info.GetReturnValue().Set(Nan::Null());
+        return;
+    }
+    size_t to_read = std::min(buffer_length, available_bytes);
+    std::shared_ptr<v8::BackingStore> backing_store = view->Buffer()->GetBackingStore();
+    unsigned char *out = static_cast<unsigned char *>(backing_store->Data()) + view->ByteOffset();
+    ssize_t nread = ::read(obj->socketfd_, out, to_read);
+    if (nread < 0) {
+        return Nan::ThrowError("Unable to read from socket.");
+    }
+    info.GetReturnValue().Set(Nan::New<v8::Number>(static_cast<double>(nread)));
 }
 
 NAN_METHOD(SynchronousSocket::Write) {
@@ -94,4 +189,36 @@ NAN_METHOD(SynchronousSocket::Write) {
         close(obj->socketfd_);
         Nan::ThrowError("Unable to write to socket.");
     }
+}
+
+NAN_METHOD(SynchronousSocket::WriteFromBuffer) {
+    SynchronousSocket *obj = Nan::ObjectWrap::Unwrap<SynchronousSocket>(info.This());
+    if (info.Length() == 0 || !info[0]->IsArrayBufferView()) {
+        return Nan::ThrowTypeError("Buffer must be a Uint8Array, Buffer, or other ArrayBuffer view.");
+    }
+    v8::Local<v8::ArrayBufferView> view = info[0].As<v8::ArrayBufferView>();
+    size_t buffer_length = view->ByteLength();
+    if (buffer_length == 0) {
+        info.GetReturnValue().Set(Nan::New<v8::Uint32>(0));
+        return;
+    }
+    std::shared_ptr<v8::BackingStore> backing_store = view->Buffer()->GetBackingStore();
+    unsigned char *data = static_cast<unsigned char *>(backing_store->Data()) + view->ByteOffset();
+    size_t total_written = 0;
+    while (total_written < buffer_length) {
+        ssize_t written = ::write(obj->socketfd_, data + total_written, buffer_length - total_written);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(obj->socketfd_);
+            return Nan::ThrowError("Unable to write to socket.");
+        }
+        if (written == 0) {
+            close(obj->socketfd_);
+            return Nan::ThrowError("Unable to write to socket.");
+        }
+        total_written += (size_t)written;
+    }
+    info.GetReturnValue().Set(Nan::New<v8::Number>(static_cast<double>(total_written)));
 }
