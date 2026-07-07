@@ -22,6 +22,26 @@ class SynchronousSocket : public Nan::ObjectWrap {
     static Nan::Persistent<v8::Function> constructor;
     int socketfd_;
     std::string socketPath_;
+    
+    friend class SynchronousSocketServer;
+};
+
+class SynchronousSocketServer : public Nan::ObjectWrap {
+  public:
+    static NAN_MODULE_INIT(Init);
+
+  private:
+    explicit SynchronousSocketServer(std::string socketPath);
+    ~SynchronousSocketServer();
+
+    static NAN_METHOD(New);
+    static NAN_METHOD(Listen);
+    static NAN_METHOD(Accept);
+    static NAN_METHOD(Close);
+
+    static Nan::Persistent<v8::Function> constructor;
+    int serverfd_;
+    std::string socketPath_;
 };
 
 

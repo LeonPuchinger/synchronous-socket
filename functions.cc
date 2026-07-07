@@ -222,3 +222,120 @@ NAN_METHOD(SynchronousSocket::WriteFromBuffer) {
     }
     info.GetReturnValue().Set(Nan::New<v8::Number>(static_cast<double>(total_written)));
 }
+
+// SynchronousSocketServer implementation
+
+Nan::Persistent<v8::Function> SynchronousSocketServer::constructor;
+
+NAN_MODULE_INIT(SynchronousSocketServer::Init) {
+    v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
+    tpl->SetClassName(Nan::New("SynchronousSocketServer").ToLocalChecked());
+    tpl->InstanceTemplate()->SetInternalFieldCount(1);
+
+    Nan::SetPrototypeMethod(tpl, "listen", Listen);
+    Nan::SetPrototypeMethod(tpl, "accept", Accept);
+    Nan::SetPrototypeMethod(tpl, "close", Close);
+
+    constructor.Reset(Nan::GetFunction(tpl).ToLocalChecked());
+    Nan::Set(target, Nan::New("SynchronousSocketServer").ToLocalChecked(), Nan::GetFunction(tpl).ToLocalChecked());
+}
+
+SynchronousSocketServer::SynchronousSocketServer(std::string socketPath) : serverfd_(-1), socketPath_(socketPath) { }
+
+SynchronousSocketServer::~SynchronousSocketServer() { }
+
+NAN_METHOD(SynchronousSocketServer::New) {
+    std::string socketPath = *Nan::Utf8String(info[0]);
+    SynchronousSocketServer *obj = new SynchronousSocketServer(socketPath);
+    
+    // Bind to socket path
+    obj->serverfd_ = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (obj->serverfd_ == -1) {
+        Nan::ThrowError("Unable to open server socket file descriptor.");
+        return;
+    }
+    
+    struct sockaddr_un addr;
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, obj->socketPath_.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+    
+    // Remove existing socket file if it exists
+    unlink(obj->socketPath_.c_str());
+    
+    if (bind(obj->serverfd_, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        close(obj->serverfd_);
+        Nan::ThrowError("Unable to bind to socket path.");
+        return;
+    }
+    
+    obj->Wrap(info.This());
+    info.GetReturnValue().Set(info.This());
+}
+
+NAN_METHOD(SynchronousSocketServer::Listen) {
+    SynchronousSocketServer* obj = Nan::ObjectWrap::Unwrap<SynchronousSocketServer>(info.This());
+    
+    int backlog = 5; // Default backlog
+    if (info.Length() > 0 && info[0]->IsNumber()) {
+        backlog = Nan::To<int32_t>(info[0]).FromJust();
+    }
+    
+    if (listen(obj->serverfd_, backlog) == -1) {
+        Nan::ThrowError("Unable to listen on socket.");
+    }
+}
+
+NAN_METHOD(SynchronousSocketServer::Accept) {
+    SynchronousSocketServer* obj = Nan::ObjectWrap::Unwrap<SynchronousSocketServer>(info.This());
+    
+    // Poll for incoming connections
+    struct pollfd pfd;
+    pfd.fd = obj->serverfd_;
+    pfd.events = POLLIN;
+    
+    for (;;) {
+        int pr = poll(&pfd, 1, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            Nan::ThrowError("Error waiting for connection.");
+            return;
+        }
+        break;
+    }
+    
+    if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+        Nan::ThrowError("Server socket error.");
+        return;
+    }
+    
+    struct sockaddr_un addr;
+    socklen_t addrlen = sizeof(addr);
+    int clientfd = accept(obj->serverfd_, (struct sockaddr*)&addr, &addrlen);
+    
+    if (clientfd == -1) {
+        Nan::ThrowError("Unable to accept connection.");
+        return;
+    }
+    
+    // Create new SynchronousSocket instance with the accepted connection
+    SynchronousSocket* clientSocket = new SynchronousSocket("");
+    clientSocket->socketfd_ = clientfd;
+    
+    v8::Local<v8::Object> instance = Nan::NewInstance(Nan::New(SynchronousSocket::constructor)).ToLocalChecked();
+    clientSocket->Wrap(instance);
+    
+    info.GetReturnValue().Set(instance);
+}
+
+NAN_METHOD(SynchronousSocketServer::Close) {
+    SynchronousSocketServer* obj = Nan::ObjectWrap::Unwrap<SynchronousSocketServer>(info.This());
+    
+    if (obj->serverfd_ != -1) {
+        close(obj->serverfd_);
+        obj->serverfd_ = -1;
+    }
+    
+    // Remove the socket file
+    unlink(obj->socketPath_.c_str());
+}
