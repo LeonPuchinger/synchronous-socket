@@ -15,6 +15,7 @@ class SynchronousSocket : public Nan::ObjectWrap {
     static NAN_METHOD(Connect);
     static NAN_METHOD(Disconnect);
     static NAN_METHOD(Read);
+    static NAN_METHOD(ReadIntoBuffer);
     static NAN_METHOD(Write);
 
     static Nan::Persistent<v8::Function> constructor;
