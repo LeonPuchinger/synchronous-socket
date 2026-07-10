@@ -1,4 +1,4 @@
-declare class SynchronousSocket {
+export declare class SynchronousSocket {
   constructor(socketPath: string);
   connect(): void;
   disconnect(): void;
@@ -8,16 +8,9 @@ declare class SynchronousSocket {
   writeFromBuffer(buffer: ArrayBufferView | Uint8Array): number;
 }
 
-declare class SynchronousSocketServer {
+export declare class SynchronousSocketServer {
   constructor(socketPath: string);
   listen(backlog?: number): void;
   accept(): SynchronousSocket;
   close(): void;
 }
-
-declare const _default: {
-  SynchronousSocket: typeof SynchronousSocket;
-  SynchronousSocketServer: typeof SynchronousSocketServer;
-};
-
-export = _default;
