@@ -3,6 +3,7 @@
   "description": "Synchronous socket interface for Unix domain sockets.",
   "version": "0.0.2",
   "main": "index.js",
+  "types": "index.d.ts",
   "license": "BSD-3-Clause",
   "scripts": {
     "configure": "node-gyp configure",
