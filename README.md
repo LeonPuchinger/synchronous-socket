@@ -17,7 +17,7 @@ npm run build
 Quick import:
 
 ```javascript
-const { SynchronousSocket, SynchronousSocketServer } = require('./index.js');
+import { SynchronousSocket, SynchronousSocketServer } from 'synchronous-socket';
 ```
 
 ----
@@ -77,6 +77,8 @@ Examples
 Server example (blocking):
 
 ```javascript
+import { SynchronousSocketServer } from 'synchronous-socket';
+
 const server = new SynchronousSocketServer('/tmp/example.sock');
 server.listen(); // optional backlog
 const client = server.accept(); // blocks until a client connects
@@ -90,6 +92,8 @@ server.close();
 Client example (blocking):
 
 ```javascript
+import { SynchronousSocket } from 'synchronous-socket';
+
 const client = new SynchronousSocket('/tmp/example.sock');
 client.connect();
 client.write('hello server');

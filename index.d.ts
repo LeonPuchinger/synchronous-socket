@@ -14,3 +14,10 @@ export declare class SynchronousSocketServer {
   accept(): SynchronousSocket;
   close(): void;
 }
+
+declare const _default: {
+  SynchronousSocket: typeof SynchronousSocket;
+  SynchronousSocketServer: typeof SynchronousSocketServer;
+};
+
+export default _default;

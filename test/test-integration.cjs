@@ -1,7 +1,6 @@
 const assert = require("assert");
-const path = require("path");
 const { spawn } = require("child_process");
-const { SynchronousSocket, SynchronousSocketServer } = require("../index.js");
+const { SynchronousSocket, SynchronousSocketServer } = require("..");
 
 describe("SynchronousSocket integration (server/client)", function () {
     it("accepts a client and exchanges data (blocking)", function (done) {
@@ -13,14 +12,13 @@ describe("SynchronousSocket integration (server/client)", function () {
         server.listen();
 
         const clientScript = `
-const { SynchronousSocket } = require('./index.js');
+const { SynchronousSocket } = require('.')
 const socketPath = '${socketPath}';
 const c = new SynchronousSocket(socketPath);
 try {
   c.connect();
   c.write('Hello from client');
   const r = c.read();
-  // Print reply for debugging
   console.log('CLIENT_REPLY:' + (r || 'null'));
   c.disconnect();
   process.exit(0);
@@ -37,7 +35,7 @@ try {
         child.stderr.on("data", (d) => process.stderr.write(d.toString()));
 
         try {
-            const clientSocket = server.accept(); // blocks until client connects
+            const clientSocket = server.accept();
             const data = clientSocket.read();
             assert.strictEqual(data && data.toString(), "Hello from client");
 
@@ -45,7 +43,6 @@ try {
             clientSocket.disconnect();
             server.close();
 
-            // wait for child to exit
             child.on("exit", (code) => {
                 assert.strictEqual(code, 0);
                 done();
