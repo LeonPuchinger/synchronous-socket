@@ -1,10 +1,15 @@
 #include "functions.h"
 
-using v8::FunctionTemplate;
+napi_value InitAll(napi_env env, napi_value exports) {
+    if (SynchronousSocket::Init(env, exports) == nullptr) {
+        return nullptr;
+    }
 
-NAN_MODULE_INIT(InitAll) {
-    SynchronousSocket::Init(target);
-    SynchronousSocketServer::Init(target);
+    if (SynchronousSocketServer::Init(env, exports) == nullptr) {
+        return nullptr;
+    }
+
+    return exports;
 }
 
-NODE_MODULE(SynchronousSocket, InitAll)
+NAPI_MODULE(NODE_GYP_MODULE_NAME, InitAll)
